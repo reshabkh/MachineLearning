@@ -1,0 +1,306 @@
+from flask import Flask, jsonify, request
+from flask_pymongo import PyMongo
+import json
+from bson import json_util
+from bson.objectid import ObjectId
+from munch import *
+import math
+import time as time_
+from itertools import groupby
+
+
+app = Flask(__name__)
+
+app.config['MONGO_DBNAME'] = 'capshot_dev',
+app.config['MONGO_URI'] = 'mongodb://shubh:shubh1997@13.234.202.27:27017/capshot_dev?authSource=capshot_dev'
+
+mongo = PyMongo(app)
+
+def toJson(data):
+    #print(type(data))
+    return json.dumps(data, default=json_util.default)
+
+#function to calculate current time
+def millis():
+    return int(round(time_.time() * 1000))
+
+@app.route('/user',methods=['GET'])
+def getAllUser():
+    user = mongo.db.users
+
+    response = []
+
+    for query in user.find():
+        response.append({'username':q['userName'],'fullname':q['fullName']})
+    return jsonify({'results':response})
+
+@app.route('/getuserFriends',methods=['POST'])
+def getuserFriend():
+    # userId = request.get_json(silent=True)
+    # print(userId['_id'])
+    # x = userId['_id']
+    # if not data:
+    #     data = {"response":"ERROR"}
+    # print(data)
+    # userid =  str(request.args.get('userId'))
+    # print(userid)
+    data = request.get_json()
+    userid = data['userid']
+    followingListByUserId = mongo.db.userrelations
+    userRelationData = []
+    #query to the monog userrelations collections
+    cursor = followingListByUserId.find({"userId":ObjectId(userid)},{"otherUsersList.userName":1,"otherUsersList.userId":1,"otherUsersList.relationType":1})
+    #print(type(query))
+    #response = {'userId':query['userId']}
+    for item in cursor:
+        userRelationData.append(item)
+    ##trying to do same thing using python
+    userRelationDictData = userRelationData[0]
+    #print(userRelationDictData)
+    results = []
+    for item in userRelationDictData["otherUsersList"]:
+        if(item["relationType"]== 'MeIsFollowingThis') or (item["relationType"]== 'Bidirectional'):
+            results.append(item)
+    # userFolloweeDict = {}
+    # for item in results:
+    #     risk["usersfriend"] = item
+    # print(risk["usersfriend"])
+
+    userFolloweeDict = {}
+    userFolloweeList = []
+    userFolloweeDict["users"] = results
+    for item in userFolloweeDict["users"]:
+        userFolloweeList.append(item["userId"])
+
+
+    capshots = mongo.db.capshots
+    cursor = capshots.find({"user.userId":{"$in":userFolloweeList},"$or":[{"capshotType":"original"},{"capshotType":"reply"},{"capshotType":"remix"}]})
+    #print(type(cursor))
+    capshotByUserFollowee = []
+    for item in cursor:
+        capshotByUserFollowee.append(item)
+    # for i in len(results):
+    #     xyzz.append(results[i].userId)
+    # print(xyzz)
+    #return the results to client
+    capshotDict = {}
+    capshotDeckIdList = []
+    capshotDict["capshotDict"] = capshotByUserFollowee
+    for item in capshotDict["capshotDict"]:
+        capshotDeckIdList.append(item["deckId"])
+    print(capshotDeckIdList)
+
+    deck = mongo.db.decks
+    cursor = deck.find({"_id":{"$in":capshotDeckIdList}})
+    deckDickList = []
+    deckDict = {}
+    for item in cursor:
+        deckDickList.append(item)
+    deckDict["deck"] = deckDickList
+    #weight function calculation
+    for item in deckDict["deck"]:
+        noOfReplies = item["noOfReplies"]
+        noOfRemixes = item["noOfRemixes"]
+        sharesCount = item["sharesCount"]
+        viewsCount = item["viewsCount"]
+        likesCount = item["likesCount"]
+        weight = math.log(noOfReplies + noOfRemixes + sharesCount + viewsCount + likesCount +1)
+        item["weight"] = weight
+    # def deckWeight():
+    #Timliness calulation function
+    #def deckTimliness():
+    for item in deckDict["deck"]:
+        lastModified = item["lastModified"]
+        item["freshness"] = millis() - lastModified
+
+    #affinity of the deck
+    #getAll the capshot of user previously interacted with
+    cursor = capshots.find({"user.userId":userid,"$or":[{"capshotType":"reply"},{"capshotType":"remix"}]}) #likes logic have to put here tell subhankar to insert that field
+    capshotInteractedByUserid = []
+    capshotInteractedByUseridDict = {}
+    for item in cursor:
+        capshotInteractedByUserid.append(item)
+    capshotInteractedByUseridDict["userinteraction"] = capshotInteractedByUserid
+    #{"replyToCapshotId":{"$in":userFolloweeList},{"remixToCapshotId":{"$in":userFolloweeList}
+    # def intersection(lst1, lst2): 
+    # lst3 = [value for value in lst1 if value in lst2] 
+    # return lst3 
+    # capshotInteractedByUserFolloweeList = intersection(capshotInteractedByUserid,capshotByUserFollowee)
+    # capshotInteractedByUserFolloweeDict["followeeInteractedCapshot"] = capshotInteractedByUserFolloweeList 
+    # #groupby userId from this we can have a dict which contain userId and list of capshot as values 
+    # cursor = capshots.find({})
+    x = []
+    y = []
+    for item in capshotInteractedByUseridDict["userinteraction"]:
+        if item["replyToCapshotId"] is not None:
+            x.append(item["replyToCapshotId"])
+        
+        if item["remixToCapshotId"] is not None:
+            y.append(item["remixToCapshotId"])
+    
+    z = []
+    
+    for item in x:
+        for capshot in capshotDict["capshotDict"]:            
+            if item == capshot["_id"]:
+                found = False
+                for b in z:
+                    if b["userid"] == capshot["user.userId"]
+                        found = b
+                        break
+                if found:
+                    found["replyCount"] =  (found["replyCount"] || 0) + 1
+                else 
+                    z.append({
+                        "userid": capshot["user.userId"],
+                        "replyCount": 1,
+                        "remixCount": 0
+                      })
+                break
+
+    for item in y:
+        for capshot in capshotDict["capshotDict"]:
+            if item == capshot["_id"]:
+                found = False
+                for b in z:
+                    if b["userid"] == item
+                        found = b
+
+                        break
+                if found:
+                    b["remixCount"] =  (b["remixCount"] || 0) + 1
+                else 
+                    z.append({
+                        "userid": item,
+                        "remixCount": 1,
+                        "replyCount": 0
+                        })
+
+
+
+           
+                
+
+
+    
+    cursor = capshots.find({"_id":"$in":x},{"_id":1,"user":1})
+    for i in cursor:
+        y.append(i)
+    z["keyin"] = y
+    for item in capshotInteractedByUseridDict["userinteraction"]:
+        for user in z['keyin']:
+            if item["replyToCapshotId"] == user["_id"]:
+                item["user"] = user
+            else if item["remixToCapshotId"] == user["_id"]:
+                item["user"] = user
+            else:
+                break
+    userinteractionList = 
+    for  key,group in itertools.groupby(capshotInteractedByUseridDict["userinteraction"], lambda item: item["user".userId]):
+        
+                    
+                
+            
+     map(fun,y) 
+    #getAll all the orginal capshotId of interaction and then find the user who posted this orginal capshotType
+    #filter the result to only that capshot id that can posted by user fo
+    #fetch all capshot i previously interacted
+    #{cid:ff,cType:reply}
+    #getall 
+    print(capshotInteractedByUserid)
+    #gropyby result by userid
+
+    return toJson(deckDict)
+
+# userRelationData = toJson(userRelationData)
+# userRelationDictData = json.loads(userRelationData)[0] #convert string represnting object to python dict type
+# print("hello1")
+# #print(type(userRelationDictData))
+# #print(userRelationDictData)
+# userRelationObjData = munchify(userRelationDictData) #it convert python dict type to javascript object type
+
+#object manipulation
+# results = [] #defining a array
+# results.append({"parentuserId":ObjectId(id)})
+# for item in userRelationObjData.otherUsersList:
+#     if(item.relationType == 'MeIsFollowingThis') or (item.relationType == 'Bidirectional'):
+#         results.append(item)
+#print(type(results))
+#get deckid of userfollowing
+@app.route('/getDeckIds',methods=['POST','GET'])
+#getdeckid by passing the userid
+def getDeckDetails():
+    '''This function give us the deck ids that are posted by user'''
+    nana = getuserFriend()
+    print(nana)
+    data = request.get_json()
+    userid = data['userId']
+    decks = mongo.db.decks
+    cursor = decks.find({"views.users.userId":ObjectId(userid)})
+    results = []
+    for item in cursor:
+        #print(item)
+        results.append(item)
+    return toJson(results)
+# build weight function
+# @app.route('/getCapshots',methods = ['POST','GET'])
+# def getCapshots():
+#     x = getuserFriend("5cfe49c3f865ff423ddf27c3")
+#     print(type(x))
+#     xDict = json.loads(x)[0]
+#     print(xDict)
+#     print("hello1")
+#     print(type(xDict))
+#     print("hello2")
+#     xObjDict = munchify(xDict)
+#     print("hello3")
+#     print(type(xObjDict))
+#     for i in xObjDict:
+#         print(i)
+#     # y = list(xObjDict.userId)
+#     # print(y)
+#     capshots = mongo.db.capshots
+#     capshots.find({})
+
+
+if __name__ == '__main__':
+    app.run(debug = True)
+#
+# app = Flask(__name__)
+# CORS(app) # very important!
+#
+# USERNAME = 'shubh'
+# PASSWORD = '<shubh1997>'
+# PORT = '27017'
+# HOST = '13.234.202.27'
+#
+# app.config['MONGO_DBNAME'] = 'capshot_dev'
+# app.config['MONGO_HOST'] = HOST
+# app.config['MONGO_PORT'] = PORT
+# app.config['MONGO_USERNAME'] = USERNAME
+# app.config['MONGO_PASSWORD'] = PASSWORD
+# mongo = PyMongo(app)
+
+
+# x = json.dumps(response)
+# y = json.loads(x)
+# print(type(x))
+# print(type(y))
+# for i in x.otherUsersList:
+#     print(i)
+
+
+
+# x =  toJson(response)
+# xyz=[]
+# for i in x.otherUsersList:
+#     xyz.append(i.userName)
+#"otherUsersList":{"$elemMatch":{"relationType":"Bidirectional"}}
+#"_id" : ObjectId("5d1c9cd8aff60e7928ea306d")
+#{'otheruserlist':query['otherUsersList'.userName]}
+
+# response = []
+#
+# for query in following.find():
+#     response.append({'id':query['_id']})
+# return jsonify({'results':response})
